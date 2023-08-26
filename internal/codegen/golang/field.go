@@ -20,6 +20,19 @@ type Field struct {
 	EmbedFields []Field
 }
 
+// Match returns true if the name and the type of the 2 fields are equal.
+func (gf Field) Match(other Field) bool {
+	if gf.Name != other.Name {
+		return false
+	}
+
+	if gf.Type != other.Type {
+		return false
+	}
+
+	return true
+}
+
 func (gf Field) Tag() string {
 	return TagsToString(gf.Tags)
 }

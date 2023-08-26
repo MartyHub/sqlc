@@ -181,8 +181,21 @@ func argName(name string) string {
 	return out
 }
 
-func buildQueries(req *plugin.CodeGenRequest, structs []Struct) ([]Query, error) {
+func lookups(req *plugin.CodeGenRequest, other Struct, ls ...Structs) (Struct, bool) {
+	for _, s := range ls {
+		if exists, found := s.Lookup(req, other); found {
+			return exists, true
+		}
+	}
+
+	return other, false
+}
+
+func buildQueries(req *plugin.CodeGenRequest, tableStructs Structs) ([]Query, error) {
+	var queryStructs Structs
+
 	qs := make([]Query, 0, len(req.Queries))
+
 	for _, query := range req.Queries {
 		if query.Name == "" {
 			continue
@@ -233,8 +246,15 @@ func buildQueries(req *plugin.CodeGenRequest, structs []Struct) ([]Query, error)
 			if err != nil {
 				return nil, err
 			}
+
+			found := false
+
+			if req.Settings.Go.ReuseStructs {
+				*s, found = lookups(req, *s, tableStructs, queryStructs)
+			}
+
 			gq.Arg = QueryValue{
-				Emit:        true,
+				Emit:        !found,
 				Name:        "arg",
 				Struct:      s,
 				SQLDriver:   sqlpkg,
@@ -259,47 +279,34 @@ func buildQueries(req *plugin.CodeGenRequest, structs []Struct) ([]Query, error)
 				SQLDriver: sqlpkg,
 			}
 		} else if putOutColumns(query) {
-			var gs *Struct
-			var emit bool
-
-			for _, s := range structs {
-				if len(s.Fields) != len(query.Columns) {
-					continue
-				}
-				same := true
-				for i, f := range s.Fields {
-					c := query.Columns[i]
-					sameName := f.Name == StructName(columnName(c, i), req.Settings)
-					sameType := f.Type == goType(req, c)
-					sameTable := sdk.SameTableName(c.Table, s.Table, req.Catalog.DefaultSchema)
-					if !sameName || !sameType || !sameTable {
-						same = false
-					}
-				}
-				if same {
-					gs = &s
-					break
-				}
+			var columns []goColumn
+			for i, c := range query.Columns {
+				columns = append(columns, goColumn{
+					id:     i,
+					Column: c,
+					embed:  newGoEmbed(c.EmbedTable, tableStructs, req.Catalog.DefaultSchema),
+				})
 			}
 
-			if gs == nil {
-				var columns []goColumn
-				for i, c := range query.Columns {
-					columns = append(columns, goColumn{
-						id:     i,
-						Column: c,
-						embed:  newGoEmbed(c.EmbedTable, structs, req.Catalog.DefaultSchema),
-					})
-				}
-				var err error
-				gs, err = columnsToStruct(req, gq.MethodName+"Row", columns, true)
-				if err != nil {
-					return nil, err
-				}
-				emit = true
+			gs, err := columnsToStruct(req, gq.MethodName+"Row", columns, true)
+			if err != nil {
+				return nil, err
 			}
+
+			found := false
+
+			*gs, found = tableStructs.Lookup(req, *gs)
+
+			if !found && req.Settings.Go.ReuseStructs {
+				*gs, found = queryStructs.Lookup(req, *gs)
+			}
+
+			if !found {
+				queryStructs = append(queryStructs, *gs)
+			}
+
 			gq.Ret = QueryValue{
-				Emit:        emit,
+				Emit:        !found,
 				Name:        "i",
 				Struct:      gs,
 				SQLDriver:   sqlpkg,

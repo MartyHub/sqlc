@@ -96,6 +96,7 @@ message GoCode {
   string output_batch_file_name = 24;
   bool json_tags_id_uppercase = 26;
   bool omit_unused_structs = 27;
+  bool reuse_structs = 29;
 }
 
 message JSONCode {
